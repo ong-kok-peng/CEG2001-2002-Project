@@ -4,7 +4,7 @@
 // === Pin definitions ===
 #define LED       BIT0        // P1.0 onboard LED
 #define RAIN_DO   BIT0        // P2.0 - Digital Rain signal
-#define THRESHOLD 2000        // Example ADC threshold
+#define THRESHOLD 2200        // Adjust this value to make detection more sensitive
 
 // === Function prototypes ===
 void uart_init(void);
@@ -16,6 +16,16 @@ void send_sensor_data(unsigned int rainValue, unsigned char rainDetected);
 void main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog
+    // === Clock setup: 1 MHz SMCLK ===
+    UCSCTL3 = SELREF__REFOCLK;          // FLL reference = REFO
+    UCSCTL4 |= SELA__REFOCLK;           // ACLK = REFO
+    __bis_SR_register(SCG0);            // Disable FLL control loop
+    UCSCTL0 = 0x0000;                   // Reset DCO and modulation
+    UCSCTL1 = DCORSEL_2;                // DCO range ~1MHz
+    UCSCTL2 = FLLD_1 | 30;              // (N + 1) * FLLRef = 32768 * 31 / 1 = ~1.013 MHz
+    __bic_SR_register(SCG0);            // Enable FLL control loop
+    __delay_cycles(250000);             // Wait for DCO to settle
+
 
     // --- I/O setup ---
     P1DIR |= LED;               // LED output
@@ -35,27 +45,36 @@ void main(void)
 
     while (1)
     {
+        // Read analog and digital values
         unsigned int rainAnalog = read_rain_analog();
         unsigned char rainDigital = read_rain_digital();
 
-        // LED reflects digital signal (rain detected)
-        if (rainDigital == 1)
+        // === Combined detection logic ===
+        // - rainAnalog < THRESHOLD  analog says "rain"
+        // - rainDigital == 1  digital pin says "rain"
+        //
+        // You can require either one OR both depending on reliability preference.
+        // Here we use OR (detect rain if either says so)
+        unsigned char rainDetected = (rainAnalog < THRESHOLD) || (rainDigital == 1);
+
+        // LED reflects detection
+        if (rainDetected)
             P1OUT |= LED;
         else
             P1OUT &= ~LED;
 
-        // Send combined data (can later add temperature, humidity, etc.)
-        send_sensor_data(rainAnalog, rainDigital);
+        // Send both analog and digital data over UART
+        send_sensor_data(rainAnalog, rainDetected);
 
-        __delay_cycles(1000000); // 1 second delay (at 1 MHz)
+        __delay_cycles(1000000); // ~1 sec delay (1 MHz clock)
     }
 }
 
 // === Read analog output (AO) ===
 unsigned int read_rain_analog(void)
 {
-    ADC12CTL0 |= ADC12ENC | ADC12SC;
-    while (ADC12CTL1 & ADC12BUSY);
+    ADC12CTL0 |= ADC12ENC | ADC12SC;   // Start conversion
+    while (ADC12CTL1 & ADC12BUSY);     // Wait for finish
     return ADC12MEM0;
 }
 
@@ -70,21 +89,24 @@ unsigned char read_rain_digital(void)
 void send_sensor_data(unsigned int rainValue, unsigned char rainDetected)
 {
     char msg[64];
-    sprintf(msg, "RainADC=%d, Rain=%s\r\n", rainValue,
+    sprintf(msg,
+            "RainADC=%d, Threshold=%d, Rain=%s\r\n",
+            rainValue,
+            THRESHOLD,
             rainDetected ? "DETECTED" : "CLEAR");
+
     uart_print(msg);
 }
 
-// === UART setup ===
 void uart_init(void)
 {
-    P4SEL |= BIT4 + BIT5;               // P4.4 TX, P4.5 RX
-    UCA1CTL1 |= UCSWRST;
-    UCA1CTL1 |= UCSSEL_2;               // SMCLK
-    UCA1BR0 = 104;                      // 1MHz/9600
+    P4SEL |= BIT4 + BIT5;           // P4.4 TX, P4.5 RX
+    UCA1CTL1 |= UCSWRST;            // Put USCI in reset
+    UCA1CTL1 |= UCSSEL_2;           // Use SMCLK (1 MHz)
+    UCA1BR0 = 104;                  // 1MHz / 9600
     UCA1BR1 = 0;
-    UCA1MCTL = UCBRS_1;
-    UCA1CTL1 &= ~UCSWRST;
+    UCA1MCTL = UCBRS_1;             // Modulation
+    UCA1CTL1 &= ~UCSWRST;           // Initialize USCI
 }
 
 // === UART print helper ===

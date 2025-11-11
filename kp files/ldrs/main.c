@@ -1,9 +1,15 @@
+//__delay_cycles() must multiply value by 8!!
+//when using timer, makesure prescaler is /8!!
+
 #include <msp430.h> 
 #include <stdint.h>
+
+volatile char twoSec_intervalUp = 0;
 
 volatile int adc_vals[4] = {0, 0, 0, 0};
 const int volt_dvr_r1s[4] = {490, 490, 490, 490}; // adjust to actual r1 values for each volt divider
 
+void msp430f5529_mclk_smclk_8mhz(void);
 void light_ldr_measurement();
 void uart_printf(const char* data);
 void integerToUsart(unsigned int integer);
@@ -11,12 +17,13 @@ char usartValue[6] = { 0x20, 0x20, 0x20, 0x20, 0x20,'\0' };
 
 int main(void)
 {
-	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
+    msp430f5529_mclk_smclk_8mhz();
 
-	//ADC REGISTERS
-	P6SEL |= BIT0 | BIT1 | BIT2 | BIT3;                   // P6.0 thru P6.3 ADC option select
+    //ADC REGISTERS
+    P6SEL |= BIT0 | BIT1 | BIT2 | BIT3;                   // P6.0 thru P6.3 ADC option select
 
-	ADC12CTL0 = ADC12SHT02 + ADC12MSC + ADC12ON;          // Sampling time, ADC12 on
+    ADC12CTL0 = ADC12SHT02 + ADC12MSC + ADC12ON;          // Sampling time, ADC12 on
     ADC12CTL1 = ADC12SHP + ADC12CONSEQ_1;                 // Use sampling timer, with sequence of ADC channels
 
     ADC12MCTL0 = ADC12SREF_0 + ADC12INCH_0;               // Vr+=AVcc and Vr-=AVss; Select Channel A0
@@ -32,28 +39,41 @@ int main(void)
     P4DIR |= BIT4;                    // set as output (RXD)
     P4DIR &= ~BIT5;                   // set as input (TXD) (not used in this code!)
 
-    UCA1CTL1 |= UCSWRST;                // USCI module in reset mode
-    UCA1CTL1 |= UCSSEL_2;               // SMCLK
-    UCA1BR0 = 0x68;                     // Low Byte for 9600 Bd (see User's Guide)
-    UCA1BR1 = 0x00;                     // High Byte for 9600 Bd
-    UCA0MCTL |= UCBRS_1 + UCBRF_0;      // Modulation UCBRSx=1, UCBRFx=0
-    UCA1CTL0 = 0x00;                    // No parity, LSB first, 8-bit, one stop bit
-    UCA1CTL1 &= ~UCSWRST;               // USCI module released for operation
+    UCA1CTL1 |= UCSWRST;                        // USCI module in reset mode
+    UCA1CTL1 |= UCSSEL_2;                       // SMCLK at 8Mhz!!
+    UCA1BR0 = 0x04;                             // Low Byte for 115200 Bd (see User's Guide)
+    UCA1BR1 = 0x00;                             // High Byte for 115200 Bd
+    UCA1MCTL |= UCBRS_4 | UCBRF_7 | UCOS16;      // Modulation UCBRSx=4, UCBRFx=7, UCOS16 = 1;
+    UCA1CTL0 = 0x00;                            // No parity, LSB first, 8-bit, one stop bit
+    UCA1CTL1 &= ~UCSWRST;                      // USCI module released for operation
 
-    uart_printf("\ec");
+    /*------timerA configuration-------*/
+    //ta1ccr0 interval every 2s
+    TA1CTL = TASSEL_1 | ID_3 | MC_1 | TACLR;        // ACLK, /8, UP, clear
+    TA1CCR0 = 8192;                                 // 1 tick is 0.244ms, so 2s = 8192
+    TA1CCTL0 = CCIE;
 
     __enable_interrupt();
 
     while(1){
         //main program loop, other sensor functions and calculations and logic here
 
-        light_ldr_measurement();
+        if (twoSec_intervalUp) {
+            twoSec_intervalUp = 0;
+            light_ldr_measurement();
+        }
 
-        __delay_cycles(1000000); //1s interval per loop
     }
 }
 
-//ADC ISR
+/*-----------timerA ISRs--------------*/
+//timerA1 2s dht22 interval ISR
+#pragma vector = TIMER1_A0_VECTOR
+__interrupt void TIMER0_A0_ISR(void) {
+    twoSec_intervalUp = 1;
+}
+
+/*---------------ADC ISR----------------*/
 #pragma vector = ADC12_VECTOR
 __interrupt void ADC12_ISR(void)
 {
@@ -63,6 +83,31 @@ __interrupt void ADC12_ISR(void)
             adc_vals[2] = ADC12MEM2; adc_vals[3] = ADC12MEM3;
             break;
     }
+}
+
+void msp430f5529_mclk_smclk_8mhz(void) {
+    UCSCTL3 = SELREF_2;                       // Set DCO FLL reference = REFO
+      UCSCTL4 |= SELA_2;                        // Set ACLK = REFO
+      UCSCTL0 = 0x0000;                         // Set lowest possible DCOx, MODx
+
+      // Loop until XT1,XT2 & DCO stabilizes - In this case only DCO has to stabilize
+      do {
+        UCSCTL7 &= ~(XT2OFFG + XT1LFOFFG + DCOFFG);    // Clear XT2,XT1,DCO fault flags
+        SFRIFG1 &= ~OFIFG;                             // Clear fault flags
+      }while (SFRIFG1&OFIFG);                   // Test oscillator fault flag
+
+      __bis_SR_register(SCG0);                  // Disable the FLL control loop
+      UCSCTL1 = DCORSEL_5;                      // Select DCO range 16MHz operation
+      UCSCTL2 |= 249;                           // Set DCO Multiplier for 8MHz
+                                                // (N + 1) * FLLRef = Fdco
+                                                // (249 + 1) * 32768 = 8MHz
+      __bic_SR_register(SCG0);                  // Enable the FLL control loop
+
+      // Worst-case settling time for the DCO when the DCO range bits have been
+      // changed is n x 32 x 32 x f_MCLK / f_FLL_reference. See UCS chapter in 5xx
+      // UG for optimization.
+      // 32 x 32 x 8 MHz / 32,768 Hz = 250000 = MCLK cycles for DCO to settle
+      __delay_cycles(250000);
 }
 
 //LDR function to detect sky ambient light
@@ -129,3 +174,4 @@ void integerToUsart(unsigned int integer)
     usartValue[4] = (ones + 0x30);
 
 }
+

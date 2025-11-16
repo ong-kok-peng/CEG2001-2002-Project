@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "./external_sources/kok_peng/quad_ldrs.h"
 #include "./external_sources/kok_peng/uart.h"
+#include "./external_sources/kok_peng/servo.h"
 #include "./external_sources/zhi_wei/dht22.h"
 
 void msp430f5529_mclk_smclk_8mhz(void);
@@ -22,12 +23,13 @@ int main(void)
 	initUART();
 	initADCsForLDRs();
 	initDHT22();
+	init_servo();
 
 	__enable_interrupt();
 
 	while (1) {
 	    if (elapsedSeconds > 0 && elapsedSeconds-prevSeconds == 1) {
-	        //1 seconds interval timer reached, read LDR and rain sensor
+	        //read LDR and rain sensor every 1 second
 	        readLDRsResistance();
 
             //determine sky ambeint light intensity from averageLDRResistance
@@ -42,7 +44,7 @@ int main(void)
             uart_printf("R_LDR_avg:"); integerToUsart(averageLDRResistance); uart_printf(usartValue); uart_printf("\r\n");
 
 	        if (elapsedSeconds % 2 == 0) {
-                //2 seconds interval timer reached, read DHT22 sensor
+                //read DHT22 sensor every 2 seconds
 	            beginDHT22Reading();
                 readDHT22Reading();
 
@@ -54,6 +56,12 @@ int main(void)
                 }
             }
 
+	        if (elapsedSeconds % 5 == 0) {
+	            //toggle servo activation every 5 seconds
+	            servoActivated ^= 1;
+	            set_servo();
+	        }
+
 	        prevSeconds = elapsedSeconds;
 	        uart_printf("\r\n");
 	    }
@@ -64,7 +72,8 @@ int main(void)
 
 //CONFIGURE TIMER_A0 AS CAPTURE/COMPARE TIMER
 void set_capturecompare_timer(void) {
-    TA0CTL = TASSEL_2 | ID_3 | MC_2 | TACLR;        // SMCLK, /8, continuous 16-bit unsigned counter, clear
+    TA0CTL = TASSEL_2 | ID_3 | MC_1 | TACLR;        // SMCLK, /8, up-count mode till ta0ccr0, clear
+    TA0CCR0 = 20000;                                // capture & compare for 20ms period max (50Hz for servo motor)
 }
 
 //CONFIGURE TIMER_A1 AS SECONDS INTERVAL

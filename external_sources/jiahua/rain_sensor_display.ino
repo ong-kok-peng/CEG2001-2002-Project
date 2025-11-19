@@ -5,6 +5,12 @@
 // 4.Rain Duration Tracker
 // 5.Weather Icon
 
+// Arduino wire connections
+// GND -> GND
+// VCC -> 5V
+// SCL -> A5
+// SDA -> A4
+
 // To run the program, make sure to copy and paste the unix timestamp from https://www.unixtimestamp.com/ in the serial output
 // to get the current time
 

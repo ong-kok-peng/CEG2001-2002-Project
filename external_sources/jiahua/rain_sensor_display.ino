@@ -1,9 +1,25 @@
 // OLED will now auto-cycle through 5 screens every 3 seconds:
+
 // 1.Main Screen
-// 2.Moisture Log Graph
+// Shows the current time (PC-synced), real-time moisture %, and
+// the interpreted rain status (No Rain / Light Rain / Heavy Rain).
+// This is the primary “overview” screen.
+
+// 2.Moisture Log Graph: 
+// Displays the last 20 moisture readings as a bar graph.
+// Helps visualize recent moisture/rain trend over time.
+
 // 3.Rain Prediction
+// Predicts upcoming rain by analyzing moisture trend.
+// Shows: "Likely Rain Soon", "Stable", or "Drying Up".
+
 // 4.Rain Duration Tracker
+// Tracks how long it has been continuously raining.
+// Shows total rain time in seconds, or "Not raining now".
+
 // 5.Weather Icon
+// Displays a simple weather icon based on rain status.
+// Icons blink to simulate animation (sun, light rain, heavy rain).
 
 // Arduino wire connections
 // GND -> GND

@@ -5,14 +5,17 @@
  *      Author: Ong Kok Peng
  */
 
-//TAKE NOTE MSP430F5529 MUST CONFIGURE FOR 8MHZ SMCLK AND MCLK FIRST BEFORE INCLUDING UART.H!!
-
 #include "uart.h"
 #include <msp430.h>
 
-char usartValue[6] = { 0x20, 0x20, 0x20, 0x20, 0x20,'\0' };
+volatile uint8_t  uartArduino_buf[64];
+volatile uint16_t uartArduino_buflen  = 0;
+volatile uint8_t  uartArduinoRXDone = 0;
 
-void initUART(void) {
+volatile char uartMsgDebug[64];
+volatile char uartMsgArduino[64];
+
+void initUARTDebug(void) {
     P4SEL |= BIT4 + BIT5;           // P4.4 TX, P4.5 RX
     UCA1CTL1 |= UCSWRST;            // Put USCI in reset
     UCA1CTL1 |= UCSSEL_2;           // Use SMCLK (1 MHz)
@@ -20,33 +23,54 @@ void initUART(void) {
     UCA1BR1 = 0;
     UCA1MCTL = UCBRS_1;             // Modulation
     UCA1CTL1 &= ~UCSWRST;           // Initialize USCI
-
 }
 
-void uart_printf(const char* data) {
-    volatile char i = 0;
-    while (data[i] != '\0') {                   // Check for end of string '\0'
-        UCA1TXBUF = data[i];                    // Put character to buffer
-        while (UCA1STAT & UCBUSY);              // Wait until char is sent
-        i++;
+void initUARTArduino(void) {
+    P3SEL |= BIT3 + BIT4;           // P3.3 TX, P3.4 RX
+    UCA0CTL1 |= UCSWRST;            // Put USCI in reset
+    UCA0CTL1 |= UCSSEL_2;           // Use SMCLK (1 MHz)
+    UCA0BR0 = 104;                  // 1MHz / 9600
+    UCA0BR1 = 0;
+    UCA0MCTL = UCBRS_1;             // Modulation
+    UCA0IE   = UCRXIE;
+    UCA0CTL1 &= ~UCSWRST;           // Initialize USCI
+}
+
+void uart_printDebug(char *str)
+{
+    while (*str)
+    {
+        while (!(UCA1IFG & UCTXIFG));
+        UCA1TXBUF = *str++;
     }
 }
 
-void integerToUsart(unsigned int integer) {
-    char tenthousands, thousands, hundreds, tens, ones;
+void uart_printArduino(char *str)
+{
+    while (*str)
+    {
+        while (!(UCA0IFG & UCTXIFG));
+        UCA0TXBUF = *str++;
+    }
+}
 
-    tenthousands = integer / 10000;
-    usartValue[0] = (char)(tenthousands + 0x30);
+//ISR for UCA0 RX
+#pragma vector = USCI_A0_VECTOR
+__interrupt void USCI_A0_ISR(void)
+{
+    P1OUT ^= BIT0;
 
-    thousands = integer % 10000 / 1000;
-    usartValue[1] = (thousands + 0x30);
+    switch (UCA0IV) {
+        case 2: { // UCRXIFG
+            uint8_t b = UCA0RXBUF;
 
-    hundreds = integer % 1000 / 100;
-    usartValue[2] = (hundreds + 0x30);
+            if (uartArduino_buflen < 63) {     // leave room for '\0'
+                uartArduino_buf[uartArduino_buflen++] = b;
+            }
 
-    tens = integer % 100 / 10;
-    usartValue[3] = (tens + 0x30);
+            uartArduinoRXDone = 1;
+        } break;
 
-    ones = integer % 10;
-    usartValue[4] = (ones + 0x30);
+        default: break;
+    }
 }

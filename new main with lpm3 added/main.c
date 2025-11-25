@@ -1,8 +1,9 @@
 #include <msp430.h> 
 #include <stdint.h>
-#include <external_sources/kok_peng/ldrs_rainsensor.h>
-#include "./external_sources/kok_peng/uart.h"
-//#include "./external_sources/kok_peng/servo.h"
+#include <stdio.h>
+#include "external_sources/ldrs_rainsensor.h"
+#include "./external_sources/uart.h"
+//#include "./external_sources/servo.h"
 
 void msp430f5529_smclk_1mhz(void);
 void set_capturecompare_timer(void);
@@ -12,29 +13,36 @@ volatile char do_work = 0;
 
 int main(void)
 {
-	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
+    msp430f5529_smclk_1mhz(); //MUST RUN FIRST!!
 
-	msp430f5529_smclk_1mhz(); //MUST RUN FIRST!!
-	set_capturecompare_timer();
-	set_3seconds_stopwatch();
+    P1DIR |= BIT0; P1OUT |= BIT0;
+    __delay_cycles(1000000);  //turn on LED P1.0 at boot
+    P1OUT &= ~BIT0;
 
-	initUART();
-	initADCsForLDRs();
-	//init_servo();
+    set_capturecompare_timer();
+    set_3seconds_stopwatch();
 
-	__enable_interrupt();
+    initUARTDebug();
+    initUARTArduino();
+    initADCsForLDRs();
+    //init_servo();
 
-	while (1) {
-      __bis_SR_register(LPM3_bits | GIE);   //put to LPM3 mode until every 5 seconds later from TA1
+    __enable_interrupt();
+
+    while (1) {
+      __bis_SR_register(LPM3_bits | GIE);   //MCLK, SMCLK off
       __no_operation();
 
       if (do_work) {
+        WDTCTL = WDTPW | WDTCNTCL;  //pet the wdt
         do_work = 0;
+
         beginReadADCs();
 
         // --- Inner loop: LPM0 until both done ---
         while (!(adcReadingDone)) {
-          __bis_SR_register(LPM0_bits | GIE);  // turn SMCLK on
+          __bis_SR_register(LPM0_bits | GIE);  // MCLK off, turn SMCLK on
           __no_operation();
         }
 
@@ -47,14 +55,12 @@ int main(void)
         else if (averageLDRResistance >= 100 && averageLDRResistance < 300) { ldr_output_str = "Outdoor moderate sunlight"; }
         else if (averageLDRResistance >= 0 && averageLDRResistance < 100) { ldr_output_str = "Outdoor full sunlight"; }
 
-        uart_printf(ldr_output_str); uart_printf("; ");
-        uart_printf("R_LDR_avg:"); integerToUsart(averageLDRResistance); uart_printf(usartValue);
-        uart_printf(";Rainsensor ADC: "); integerToUsart(rainSensorADC); uart_printf(usartValue);
-        uart_printf("\r\n");
+        sprintf(uartMsgDebug, "LDR: %d; %s; Rain: %d \r\n", averageLDRResistance, ldr_output_str, rainSensorADC); uart_printDebug(uartMsgDebug);
 
+        WDTCTL = WDTPW | WDTHOLD; //disable wdt until next re-arm
       }
 
-	}
+    }
 
 }
 
@@ -75,6 +81,7 @@ void set_3seconds_stopwatch(void) {
 #pragma vector = TIMER1_A0_VECTOR
 __interrupt void TIMER1_A0_ISR(void) {
     do_work = 1;
+    WDTCTL = WDTPW | WDTCNTCL | WDTSSEL_1 | WDTIS_4; //arm or re-arm WDT with 1s timeout
     __bic_SR_register_on_exit(LPM3_bits);
 }
 

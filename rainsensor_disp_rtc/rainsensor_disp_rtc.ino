@@ -1,4 +1,5 @@
 #include <AltSoftSerial.h>
+#include <string.h>
 #include <Wire.h>
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiAvrI2c.h" 
@@ -35,6 +36,7 @@ static const uint16_t LINE_MAX = 64;   // adjust to your longest line
 char line[LINE_MAX];
 unsigned long prevSoftSerialRxTime = 0;
 const long softSerialRxTimeout = 5000;
+int lightVal, rainVal;
 
 void setDS1302WithCompileTime() {
   int Year, Month, Day, Hour, Minute, Second;
@@ -71,9 +73,8 @@ void getRTCDateTime() {
 bool softSerialRx() {
   //receive serial line from external MCUs on soft serial port
   bool softSerialRxTimedOut = false;
-  
-  if (millis() - prevSoftSerialRxTime >= softSerialRxTimeout) { softSerialRxTimedOut = true; return softSerialRxTimedOut; } 
-  
+  unsigned long nowSoftSerialRxTime = millis();
+
   if (softSerial.available()) {
     int n = softSerial.readBytesUntil('\n', line, LINE_MAX - 1);
     if (n > 0) {
@@ -82,8 +83,25 @@ bool softSerialRx() {
       line[n] = '\0';
     }
   }
+  
+  if (nowSoftSerialRxTime - prevSoftSerialRxTime >= softSerialRxTimeout) { softSerialRxTimedOut = true; } 
 
   return softSerialRxTimedOut;
+}
+
+void readSoftSerialRxLine() {
+  char *ptr = strtok(line, ";");
+  int ptrindex = 0;
+  while (ptr != NULL) {
+    char * colonSplit = strchr(ptr, ':');
+    int value = colonSplit[1] - '0';
+  
+    if (ptrindex == 0) { lightVal = value; }
+    //else if (ptrindex == 1) { rainVal = value; }
+    
+    ptrindex++;
+    ptr = strtok(NULL, ";");
+  }
 }
 
 void readDHT22() {
@@ -103,11 +121,14 @@ void readDHT22() {
 }
 
 void dispOled() {
-  if (millis() - prevOledOnTime >= oledOnDuration && oledIsOn) { oled.ssd1306WriteCmd(SSD1306_DISPLAYOFF); oledIsOn = false; }
-
+  unsigned long nowOledOnTime = millis();
+  
   if (digitalRead(A3) == LOW && !oledIsOn) {
-    oledIsOn = true; oled.ssd1306WriteCmd(SSD1306_DISPLAYON); prevOledOnTime = millis();
+    oledIsOn = true; oled.ssd1306WriteCmd(SSD1306_DISPLAYON); prevOledOnTime = nowOledOnTime;
   }
+  
+  if (nowOledOnTime - prevOledOnTime >= oledOnDuration && oledIsOn) { oled.ssd1306WriteCmd(SSD1306_DISPLAYOFF); oledIsOn = false; }
+
 }
 
 void setup() {
@@ -150,15 +171,32 @@ void loop() {
 
   oled.setCursor(0,1); oled.print("---------------------");
 
-  oled.setCursor(0,2); 
   if (!softSerialRxTimedOut) {
-     oled.println(line);
+     readSoftSerialRxLine(); 
+     
+     oled.setCursor(0,2); 
+     if (lightVal == 1) { 
+      if (hours >= 20 || hours < 6) { oled.println("Night darkness "); }
+      else { oled.println("Overcast sky   "); }
+     }                         
+     else if (lightVal == 2) { oled.println("Largely cloudy"); }
+     else if (lightVal == 3) { oled.println("Cloudy        "); }
+     else if (lightVal == 4) { oled.println("Sunny         "); }
+     else if (lightVal == 5) { oled.println("Very sunny    "); }
+     
+     /*
+     oled.setCursor(0,3); 
+     if (rainVal == 1) { oled.println("No rain       "); }
+     else if (rainVal == 2) { oled.println("Moderate rain"); }
+     else if (rainVal == 3) { oled.println("Heavy rain!! "); }
+     */
   }
   else {
+    oled.setCursor(0,2); 
     oled.println("No RX received.");
   }
 
-  oled.setCursor(0,4); 
+  oled.setCursor(0,5); 
   oled.print(temperature); oled.print(" C; "); oled.print(humidity); oled.print(" %RH");
   
 }

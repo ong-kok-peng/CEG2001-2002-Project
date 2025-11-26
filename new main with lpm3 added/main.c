@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "external_sources/ldrs_rainsensor.h"
 #include "./external_sources/uart.h"
-//#include "./external_sources/servo.h"
+#include "./external_sources/servo.h"
 
 void msp430f5529_smclk_1mhz(void);
 void set_capturecompare_timer(void);
@@ -26,7 +26,7 @@ int main(void)
     initUARTDebug();
     initUARTArduino();
     initADCsForLDRs();
-    //init_servo();
+    initServo();
 
     __enable_interrupt();
 
@@ -48,14 +48,18 @@ int main(void)
 
         readLDRsResistance();
         //determine sky ambient light intensity from averageLDRResistance
-        char* ldr_output_str = "";
-        if (averageLDRResistance >= 10000) { ldr_output_str = "Night-time darkness"; }
-        else if (averageLDRResistance >= 1000 && averageLDRResistance < 10000) { ldr_output_str = "Indoor environment"; }
-        else if (averageLDRResistance >= 300 && averageLDRResistance < 1000) { ldr_output_str = "Outdoor no sunlight"; }
-        else if (averageLDRResistance >= 100 && averageLDRResistance < 300) { ldr_output_str = "Outdoor moderate sunlight"; }
-        else if (averageLDRResistance >= 0 && averageLDRResistance < 100) { ldr_output_str = "Outdoor full sunlight"; }
+        uint8_t ambientLightVal;
+        if (averageLDRResistance >= 10000) { ambientLightVal = 1; } // Night-time darkness
+        else if (averageLDRResistance >= 1000 && averageLDRResistance < 10000) { ambientLightVal = 2; } // cloudy
+        else if (averageLDRResistance >= 300 && averageLDRResistance < 1000) { ambientLightVal = 3; } // low cloudy
+        else if (averageLDRResistance >= 100 && averageLDRResistance < 300) { ambientLightVal = 4; } // sunlight
+        else if (averageLDRResistance >= 0 && averageLDRResistance < 100) { ambientLightVal = 5; } // bright sun
 
-        sprintf(uartMsgDebug, "LDR: %d; %s; Rain: %d \r\n", averageLDRResistance, ldr_output_str, rainSensorADC); uart_printDebug(uartMsgDebug);
+        sprintf(uartMsgDebug, "LIGHT:%d;RAIN:%d\r\n", ambientLightVal, rainSensorADC); uart_printDebug(uartMsgDebug);
+        sprintf(uartMsgArduino, "LIGHT:%d;RAIN:%d\r\n", ambientLightVal, rainSensorADC); uart_printArduino(uartMsgArduino);
+
+        servoActivated ^= 1; //toggle servo activated state.
+        setServo();
 
         WDTCTL = WDTPW | WDTHOLD; //disable wdt until next re-arm
       }
